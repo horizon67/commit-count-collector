@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/BurntSushi/toml"
+	"github.com/PuerkitoBio/goquery"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/shurcooL/githubv4"
@@ -11,14 +12,15 @@ import (
 	"io"
 	"log"
 	"os"
-	_ "runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	confDir = "./config/env/"
-	logFile = "batch.log"
+	confDir             = "./config/env/"
+	logFile             = "batch.log"
+	repository_base_url = "https://github.com"
 )
 
 type (
@@ -59,6 +61,8 @@ type (
 		IssuesCount                 int
 		CommitsCountForTheLastWeek  int
 		CommitsCountForTheLastMonth int
+		CommitsCount                int
+		ContributorsCount           int
 		UpdatedAt                   time.Time
 		CreatedAt                   time.Time
 	}
@@ -82,7 +86,7 @@ func (d DbConfig) DSN() string {
 func dbConnect() *gorm.DB {
 	environment := os.Getenv("ENVIRONMENT")
 	if environment == "" {
-		log.Fatal("failed to get application mode, check whether ENVIRONMENT is set.")
+		log.Fatal("Failed to get application mode, check whether ENVIRONMENT is set.")
 	}
 
 	config := readConfig(environment)
@@ -99,7 +103,7 @@ func readConfig(environment string) Config {
 	confPath := confDir + environment + ".toml"
 	_, err := toml.DecodeFile(confPath, &config)
 	if err != nil {
-		log.Fatal("unloaded config file")
+		log.Fatal("Failed to read the Config.")
 	}
 
 	config.Database.Password = os.Getenv("DB_PASSWORD")
@@ -175,22 +179,26 @@ var query struct {
 
 func main() {
 	var err error
-
-	loggingSettings()
-
 	db := dbConnect()
 	defer db.Close()
 	now := time.Now()
 
+	loggingSettings()
+
 	rows, err := db.Model(&Repository{}).Rows()
+	if err != nil {
+		log.Fatal("Failed to read the DB.")
+	}
 
 	for rows.Next() {
 		var repo Repository
 		var coin Coin
+		var numbers []int
 
 		db.ScanRows(rows, &repo)
 		db.Model(&repo).Related(&coin)
 
+		// API
 		variables := map[string]interface{}{
 			"owner": githubv4.String(coin.Owner),
 			"name":  githubv4.String(repo.Name),
@@ -203,16 +211,31 @@ func main() {
 			log.Println("API ERROR. CoinId: " + strconv.Itoa(coin.Id))
 			continue
 		}
-
 		nodes := query.Repository.DefaultBranchRef.Target.Commit.History.Nodes
 
-		db.Model(&repo).Updates(Repository{Language: query.Repository.PrimaryLanguage.Name,
+		// Web Scraping (commits and contributors count
+		doc, err := goquery.NewDocument(repository_base_url + "/" + coin.Owner + "/" + repo.Name)
+		if err != nil {
+			log.Println("Scraping ERROR. CoinId: " + strconv.Itoa(coin.Id))
+			continue
+		}
+
+		doc.Find("span.text-emphasized").Each(func(_ int, s *goquery.Selection) {
+			text, _ := strconv.Atoi(strings.Replace(strings.TrimSpace(s.Text()), ",", "", -1))
+			numbers = append(numbers, text)
+		})
+
+		db.Model(&repo).Updates(Repository{
+			Language:                    query.Repository.PrimaryLanguage.Name,
 			PullRequestsCount:           query.Repository.PullRequests.TotalCount,
 			WatchersCount:               query.Repository.Watchers.TotalCount,
 			StargazersCount:             query.Repository.Stargazers.TotalCount,
 			IssuesCount:                 query.Repository.Issues.TotalCount,
 			CommitsCountForTheLastWeek:  commitsCountForTheLastWeek(nodes, now),
-			CommitsCountForTheLastMonth: commitsCountForTheLastMonth(nodes)})
+			CommitsCountForTheLastMonth: commitsCountForTheLastMonth(nodes),
+			CommitsCount:                numbers[0],
+			ContributorsCount:           numbers[4],
+		})
 	}
 	log.Println("complate!")
 }

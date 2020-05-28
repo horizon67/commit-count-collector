@@ -1,0 +1,8 @@
+[Database]
+driver = "mysql"
+host = "127.0.0.1"
+port = "3306"
+user = "cryptocoin"
+database = "cryptocoin"
+charset = "utf8mb4"
+parseTime = "true"
