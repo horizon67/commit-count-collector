@@ -198,7 +198,7 @@ func main() {
 		db.ScanRows(rows, &repo)
 		db.Model(&repo).Related(&coin)
 
-		// API
+		// GithubAPI V4
 		variables := map[string]interface{}{
 			"owner": githubv4.String(coin.Owner),
 			"name":  githubv4.String(repo.Name),
@@ -224,6 +224,11 @@ func main() {
 			text, _ := strconv.Atoi(strings.Replace(strings.TrimSpace(s.Text()), ",", "", -1))
 			numbers = append(numbers, text)
 		})
+
+		if len(numbers) != 5 {
+			log.Println("Scraping ERROR. CoinId: " + strconv.Itoa(coin.Id))
+			continue
+		}
 
 		db.Model(&repo).Updates(Repository{
 			Language:                    query.Repository.PrimaryLanguage.Name,
