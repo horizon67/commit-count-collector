@@ -193,10 +193,13 @@ func main() {
 	for rows.Next() {
 		var repo Repository
 		var coin Coin
+		var commitsCount int
+		var contributorsCount int
 		var numbers []int
 
 		db.ScanRows(rows, &repo)
 		db.Model(&repo).Related(&coin)
+		log.Println("CoinId: " + strconv.Itoa(coin.Id))
 
 		// GithubAPI V4
 		variables := map[string]interface{}{
@@ -220,15 +223,20 @@ func main() {
 			continue
 		}
 
-		doc.Find("span.text-emphasized").Each(func(_ int, s *goquery.Selection) {
-			text, _ := strconv.Atoi(strings.Replace(strings.TrimSpace(s.Text()), ",", "", -1))
-			numbers = append(numbers, text)
+		// commitsCount
+		doc.Find("span.d-sm-inline").Each(func(_ int, s *goquery.Selection) {
+			commitsCount, _ = strconv.Atoi(strings.Replace(s.Find("strong").Text(), ",", "", -1))
 		})
 
-		if len(numbers) != 5 {
-			log.Println("Scraping ERROR. CoinId: " + strconv.Itoa(coin.Id))
-			continue
-		}
+		// contributorsCount
+		doc.Find("div.BorderGrid-cell").Each(func(_ int, s *goquery.Selection) {
+			text := s.Find("span.Counter ").Text()
+			if text != "" {
+				counter, _ := strconv.Atoi(strings.Replace(strings.TrimSpace(text), ",", "", -1))
+				numbers = append(numbers, counter)
+			}
+		})
+		contributorsCount = numbers[len(numbers)-1]
 
 		db.Model(&repo).Updates(Repository{
 			Language:                    query.Repository.PrimaryLanguage.Name,
@@ -238,8 +246,9 @@ func main() {
 			IssuesCount:                 query.Repository.Issues.TotalCount,
 			CommitsCountForTheLastWeek:  commitsCountForTheLastWeek(nodes, now),
 			CommitsCountForTheLastMonth: commitsCountForTheLastMonth(nodes),
-			CommitsCount:                numbers[0],
-			ContributorsCount:           numbers[4],
+			CommitsCount:                commitsCount,
+			ContributorsCount:           contributorsCount,
+			UpdatedAt:                   now,
 		})
 	}
 	log.Println("complate!")
